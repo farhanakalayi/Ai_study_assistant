@@ -1,0 +1,122 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 217 100% 97%; /* Soft light blue/gray background fallback */
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 221.2 83.2% 53.3%; /* #2563EB */
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 262.1 83.3% 57.8%; /* #7C3AED */
+    --secondary-foreground: 210 40% 98%;
+
+    --accent: 188.7 86.2% 43.1%; /* #06B6D4 */
+    --accent-foreground: 222.2 84% 4.9%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+
+    --radius: 1.5rem; /* 24px as requested */
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 7%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 84% 4.9%;
+
+    --secondary: 263.4 70% 50.4%;
+    --secondary-foreground: 210 40% 98%;
+
+    --accent: 188.7 86.2% 43.1%;
+    --accent-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 48%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply text-foreground transition-colors duration-200 antialiased font-sans min-h-screen;
+    background: linear-gradient(135deg, #0E6CF6 0%, #2B7FFF 50%, #5DA8FF 100%);
+    background-attachment: fixed;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* Flashcard Flip CSS Classes */
+.perspective-1000 {
+  perspective: 1000px;
+}
+.transform-style-3d {
+  transform-style: preserve-3d;
+}
+.backface-hidden {
+  backface-visibility: hidden;
+}
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
+/* Smooth custom styles for animations */
+.glow-primary {
+  box-shadow: 0 0 25px rgba(37, 99, 235, 0.35);
+}
+.glow-purple {
+  box-shadow: 0 0 25px rgba(124, 58, 237, 0.35);
+}
+.glow-btn {
+  box-shadow: 0 4px 20px -2px rgba(124, 58, 237, 0.4), 0 4px 20px -2px rgba(37, 99, 235, 0.4);
+}
+.glow-btn:hover {
+  box-shadow: 0 8px 30px 2px rgba(124, 58, 237, 0.6), 0 8px 30px 2px rgba(37, 99, 235, 0.6);
+}
