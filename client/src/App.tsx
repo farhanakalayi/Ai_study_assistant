@@ -191,9 +191,17 @@ export default function App() {
     setLoadingMessage('Parsing notes...');
 
     try {
-      const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5000')
-  .replace(/\/+$/, '');
-      const response = await fetch(`${apiUrl}/api/generate`, {
+      let API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      
+      // Clean up whitespace, leading slashes, and trailing slashes
+      API_URL = API_URL.trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      
+      // Ensure there is a protocol prefix
+      if (!API_URL.startsWith('http://') && !API_URL.startsWith('https://')) {
+        API_URL = `https://${API_URL}`;
+      }
+
+      const response = await fetch(`${API_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes }),
