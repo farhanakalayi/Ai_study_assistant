@@ -9,110 +9,98 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 
-// Setup directories
+// ──────────────────────────────────────────────
+// SETUP DIRECTORIES
+// ──────────────────────────────────────────────
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ──────────────────────────────────────────────
 // ENV LOADING
 // ──────────────────────────────────────────────
-console.log('=== MindSync Startup Diagnostics ===');
-console.log(`CWD: ${process.cwd()}`);
-console.log(`Module dir: ${__dirname}`);
+
+console.log('=== MindSync AI Startup ===');
 
 let envPath = path.join(__dirname, '.env');
 let envFound = false;
-let fallbackUsed = false;
 
 if (fs.existsSync(envPath)) {
   envFound = true;
-  console.log(`Found .env: ${envPath}`);
-} else {
-  const rootEnvPath = path.join(path.dirname(__dirname), '.env');
-  if (fs.existsSync(rootEnvPath)) {
-    envPath = rootEnvPath;
-    envFound = true;
-    console.log(`Found .env in root: ${envPath}`);
-  } else {
-    console.log('.env not found in server/ or root.');
-    const examplePath = path.join(__dirname, '.env.example');
-    if (fs.existsSync(examplePath)) {
-      const content = fs.readFileSync(examplePath, 'utf8');
-      if (content.includes('GROQ_API_KEY=') && !content.includes('GROQ_API_KEY=your_groq_api_key_here')) {
-        envPath = examplePath;
-        envFound = true;
-        fallbackUsed = true;
-        console.log(`Fallback: loading from .env.example`);
-      }
-    }
-  }
-}
-
-if (envFound) {
-  dotenv.config({ path: envPath });
+  console.log(`Found .env file: ${envPath}`);
 } else {
   dotenv.config();
 }
 
+if (envFound) {
+  dotenv.config({ path: envPath });
+}
+
 // ──────────────────────────────────────────────
-// API KEY VALIDATION
+// API KEY
 // ──────────────────────────────────────────────
+
 const apiKey = (process.env.GROQ_API_KEY || '').trim();
 
 if (!apiKey) {
-  console.log('❌ GROQ_API_KEY: NOT FOUND');
-} else if (apiKey === 'your_groq_api_key_here') {
-  console.log('❌ GROQ_API_KEY: SET TO PLACEHOLDER');
+  console.error('❌ GROQ_API_KEY is missing');
 } else {
-  console.log(`✅ GROQ_API_KEY: FOUND (starts with "${apiKey.substring(0, 8)}...")`);
+  console.log('✅ GROQ_API_KEY loaded successfully');
 }
 
 // ──────────────────────────────────────────────
-// STARTUP SELF-TEST
+// GROQ CLIENT
 // ──────────────────────────────────────────────
-async function runSelfTest() {
-  if (!apiKey || apiKey === 'your_groq_api_key_here') {
-    console.log('⚠️  Self-test skipped: API key missing or placeholder.');
-    return;
-  }
 
-  try {
-    const groq = new Groq({ apiKey });
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: "Say 'Hello'" }],
-      max_tokens: 10,
-    });
-    const text = response.choices?.[0]?.message?.content || '';
-    console.log(`✅ Groq Self-Test passed! Response: "${text.trim()}"`);
-  } catch (err) {
-    console.error(`❌ Groq Self-Test failed: ${err.status || 'unknown'} — ${err.message}`);
-  }
-}
+const groq = new Groq({
+  apiKey
+});
 
-await runSelfTest();
-console.log('====================================\n');
+// Use ONE model only.
+// Do not add llama-3.1-8b-instant as fallback.
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 // ──────────────────────────────────────────────
 // EXPRESS APP
 // ──────────────────────────────────────────────
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({ origin: '*', methods: ['GET', 'POST'] }));
+app.use(
+  helmet({
+    contentSecurityPolicy: false
+  })
+);
+
+app.use(
+  cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type']
+  })
+);
+
 app.use(express.json({ limit: '2mb' }));
+
+// ──────────────────────────────────────────────
+// RATE LIMITING
+// ──────────────────────────────────────────────
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
-  message: { error: 'Too many requests. Please try again after 15 minutes.' }
+  message: {
+    error: 'Too many requests. Please try again after 15 minutes.'
+  }
 });
+
 app.use('/api/', limiter);
 
 // ──────────────────────────────────────────────
-// ZOD SCHEMAS (unchanged from frontend contract)
+// ZOD SCHEMAS
 // ──────────────────────────────────────────────
+
 const FlashcardSchema = z.object({
   front: z.string().min(1),
   back: z.string().min(1)
@@ -120,238 +108,285 @@ const FlashcardSchema = z.object({
 
 const QuizQuestionSchema = z.object({
   question: z.string().min(1),
-  options: z.array(z.string()).min(2).max(6),
+
+  options: z
+    .array(z.string())
+    .min(2)
+    .max(6),
+
   correctAnswer: z.string().min(1),
+
   explanation: z.string().min(1)
 });
 
 const StudyMaterialSchema = z.object({
-  flashcards: z.array(FlashcardSchema).min(1),
-  quiz: z.array(QuizQuestionSchema).min(1)
+  flashcards: z
+    .array(FlashcardSchema)
+    .min(1),
+
+  quiz: z
+    .array(QuizQuestionSchema)
+    .min(1)
 });
 
 // ──────────────────────────────────────────────
-// PROMPT & HELPERS
+// PROMPT GENERATION
 // ──────────────────────────────────────────────
-function generatePrompt(notes) {
-  return `You are an expert AI Study Assistant.
-Analyze the following study notes and generate two assets:
-1. Flashcards for active recall.
-2. A multiple-choice Quiz to test understanding.
 
-Input Study Notes:
+function generatePrompt(notes) {
+  return `
+You are MindSync AI, an intelligent AI-powered study assistant.
+
+Your task is to analyze the student's study notes and create:
+
+1. Flashcards for active recall.
+2. Multiple-choice quiz questions for knowledge testing.
+
+STUDY NOTES:
 """
 ${notes}
 """
 
-You must respond ONLY with a raw, valid JSON object matching this schema:
+You MUST return ONLY a valid JSON object.
+
+Use exactly this structure:
+
 {
   "flashcards": [
     {
-      "front": "A clear, concise question or term",
-      "back": "A concise explanation, answer, or definition"
+      "front": "Question or important term",
+      "back": "Clear and concise answer or explanation"
     }
   ],
   "quiz": [
     {
-      "question": "A clear multiple-choice question testing a core concept",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctAnswer": "The exact string from the options array that represents the correct answer",
-      "explanation": "A helpful explanation of why this answer is correct and others are incorrect"
+      "question": "Multiple-choice question",
+      "options": [
+        "Option A",
+        "Option B",
+        "Option C",
+        "Option D"
+      ],
+      "correctAnswer": "Exact correct option text",
+      "explanation": "Brief explanation of why the answer is correct"
     }
   ]
 }
 
-Strict requirements:
-- Do not include any markdown wrap like \`\`\`json or \`\`\`.
-- Return ONLY the JSON object. No explanation, prefix, or suffix text.
-- Do not use control characters or malformed JSON syntax.
-- Ensure "correctAnswer" matches one of the values in "options" exactly.
-- Generate between 4 to 8 flashcards and 4 to 6 quiz questions depending on the depth of the notes.`;
+IMPORTANT RULES:
+
+- Generate between 4 and 8 flashcards.
+- Generate between 4 and 6 quiz questions.
+- Every quiz question must have useful answer options.
+- correctAnswer MUST exactly match one option.
+- Return ONLY JSON.
+- Do NOT return markdown.
+- Do NOT use \`\`\`json.
+- Do NOT add explanations before or after the JSON.
+`;
 }
+
+// ──────────────────────────────────────────────
+// CLEAN AI RESPONSE
+// ──────────────────────────────────────────────
 
 function cleanJsonResponse(rawText) {
   let cleaned = rawText.trim();
-  if (cleaned.startsWith('```json')) cleaned = cleaned.slice(7);
-  else if (cleaned.startsWith('```')) cleaned = cleaned.slice(3);
-  if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3);
+
+  if (cleaned.startsWith('```json')) {
+    cleaned = cleaned.slice(7);
+  } else if (cleaned.startsWith('```')) {
+    cleaned = cleaned.slice(3);
+  }
+
+  if (cleaned.endsWith('```')) {
+    cleaned = cleaned.slice(0, -3);
+  }
+
   return cleaned.trim();
 }
 
 // ──────────────────────────────────────────────
-// GROQ GENERATION WITH MODEL FALLBACK
+// GENERATE STUDY MATERIAL USING GROQ
 // ──────────────────────────────────────────────
-async function callGroq(notes, forceCorrection = false, previousError = '') {
-  if (!apiKey || apiKey === 'your_groq_api_key_here') {
+
+async function generateStudyMaterial(notes) {
+  if (!apiKey) {
     throw new Error('API_KEY_MISSING');
   }
 
-  const groq = new Groq({ apiKey });
-  const modelsToTry = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
-  let lastError = null;
+  console.log(`🤖 Generating study material using: ${GROQ_MODEL}`);
 
-  for (const modelName of modelsToTry) {
-    try {
-      console.log(`🤖 Generating with model: ${modelName}`);
+  const response = await Promise.race([
+    groq.chat.completions.create({
+      model: GROQ_MODEL,
 
-      let prompt = generatePrompt(notes);
-      if (forceCorrection) {
-        prompt += `\n\nCRITICAL: Your previous response failed validation with the error: "${previousError}".
-Please ensure that you output strictly valid JSON conforming exactly to the schema requested, without markdown formatting or surrounding text.`;
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are MindSync AI. Return only valid JSON. Never return markdown or additional text.'
+        },
+        {
+          role: 'user',
+          content: generatePrompt(notes)
+        }
+      ],
+
+      temperature: 0.5,
+      max_tokens: 4096,
+
+      response_format: {
+        type: 'json_object'
       }
+    }),
 
-      const response = await Promise.race([
-        groq.chat.completions.create({
-          model: modelName,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an AI study assistant. You MUST respond with ONLY valid JSON. No markdown, no explanation, no surrounding text.'
-            },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0.7,
-          max_tokens: 4096,
-          response_format: { type: 'json_object' },
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 30000))
-      ]);
+    new Promise((_, reject) =>
+      setTimeout(() => {
+        reject(new Error('TIMEOUT'));
+      }, 30000)
+    )
+  ]);
 
-      const text = response.choices?.[0]?.message?.content;
-      if (!text) throw new Error('EMPTY_RESPONSE');
+  const text = response.choices?.[0]?.message?.content;
 
-      console.log(`✅ Generation succeeded with ${modelName}`);
-      return cleanJsonResponse(text);
-
-    } catch (err) {
-      const msg = err.message || '';
-      console.warn(`⚠️ Model ${modelName} failed: ${msg}`);
-      lastError = err;
-
-      // Fatal errors — don't try next model
-      if (err.status === 401 || msg.includes('invalid_api_key')) {
-        throw new Error('API_KEY_INVALID');
-      }
-      if (err.status === 429) {
-        throw new Error('RATE_LIMITED');
-      }
-      if (msg === 'TIMEOUT') {
-        throw err;
-      }
-    }
+  if (!text) {
+    throw new Error('EMPTY_RESPONSE');
   }
 
-  throw lastError || new Error('All models failed');
+  console.log('✅ Groq generation successful');
+
+  return cleanJsonResponse(text);
 }
 
 // ──────────────────────────────────────────────
-// ROUTES
+// API ROUTE
 // ──────────────────────────────────────────────
+
 app.post('/api/generate', async (req, res) => {
   const { notes } = req.body;
 
-  if (!notes || typeof notes !== 'string' || notes.trim().length < 10) {
-    return res.status(400).json({ error: 'Please provide valid study notes (minimum 10 characters).' });
+  // Validate notes
+  if (
+    !notes ||
+    typeof notes !== 'string' ||
+    notes.trim().length < 10
+  ) {
+    return res.status(400).json({
+      error:
+        'Please provide valid study notes with at least 10 characters.'
+    });
   }
 
-  let isAborted = false;
-  req.on('close', () => { isAborted = true; });
-
   try {
-    let rawJsonText;
-    let parsedData;
-    let attempts = 0;
-    const maxAttempts = 2;
+    // Generate AI response
+    const rawJson = await generateStudyMaterial(notes);
 
-    while (attempts < maxAttempts) {
-      if (isAborted) return;
-      attempts++;
+    // Convert string to JavaScript object
+    const parsedData = JSON.parse(rawJson);
 
-      try {
-        rawJsonText = await callGroq(notes, attempts > 1, parsedData?.error || 'Validation failed');
-        parsedData = JSON.parse(rawJsonText);
-        const validated = StudyMaterialSchema.parse(parsedData);
+    // Validate structure
+    const validatedData =
+      StudyMaterialSchema.parse(parsedData);
 
-        if (isAborted) return;
-        return res.json(validated);
-      } catch (err) {
-        console.error(`Attempt ${attempts} failed:`, err.message);
-        if (attempts >= maxAttempts) throw err;
-        parsedData = { error: err.message };
-      }
-    }
+    // Send response to frontend
+    return res.status(200).json(validatedData);
+
   } catch (error) {
-    console.error('Final Generation Error:', error);
+    console.error(
+      '❌ Generation Error:',
+      error.message
+    );
 
+    // Missing API key
     if (error.message === 'API_KEY_MISSING') {
       return res.status(500).json({
-        error: 'Groq API key is missing. Add GROQ_API_KEY to server/.env'
+        error:
+          'Groq API key is missing. Add GROQ_API_KEY in Vercel Environment Variables.'
       });
     }
-    if (error.message === 'API_KEY_INVALID') {
-      return res.status(401).json({
-        error: 'The Groq API key is invalid. Get a valid key from console.groq.com.'
-      });
-    }
-    if (error.message === 'RATE_LIMITED') {
-      return res.status(429).json({
-        error: 'Groq rate limit exceeded. Please try again in a minute.'
-      });
-    }
+
+    // Timeout
     if (error.message === 'TIMEOUT') {
       return res.status(504).json({
-        error: 'Request timed out. Notes might be too long or service is slow.'
+        error:
+          'Request timed out. Please try again with shorter notes.'
       });
     }
+
+    // Empty response
+    if (error.message === 'EMPTY_RESPONSE') {
+      return res.status(500).json({
+        error:
+          'The AI returned an empty response. Please try again.'
+      });
+    }
+
+    // Zod validation error
     if (error instanceof z.ZodError) {
       return res.status(422).json({
-        error: 'AI output did not match expected structure. Try editing your notes.',
+        error:
+          'AI response did not match the expected study material format.',
         details: error.errors
       });
     }
+
+    // Invalid JSON
     if (error instanceof SyntaxError) {
       return res.status(422).json({
-        error: 'AI returned malformed JSON. Please try again.'
+        error:
+          'AI returned invalid JSON. Please try again.'
       });
     }
 
+    // Generic error
     return res.status(500).json({
-      error: `Failed to generate study materials: ${error.message}`
+      error:
+        `Failed to generate study materials: ${error.message}`
     });
   }
 });
+
+// ──────────────────────────────────────────────
+// HEALTH CHECK
+// ──────────────────────────────────────────────
 
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     provider: 'groq',
-    keyConfigured: !!apiKey && apiKey !== 'your_groq_api_key_here',
-    envLoadedFrom: envPath,
-    fallbackUsed
+    model: GROQ_MODEL,
+    keyConfigured: !!apiKey
   });
 });
 
 // ──────────────────────────────────────────────
-// SERVER STARTUP (auto-retry port)
+// ROOT ROUTE
 // ──────────────────────────────────────────────
-function startServer(port, maxRetries = 10) {
-  const server = app.listen(port, () => {
-    console.log(`\n🚀 Server running at http://localhost:${port}`);
-    console.log(`   Health check:   http://localhost:${port}/health`);
-    if (port !== Number(PORT)) {
-      console.log(`   ⚠️  Port ${PORT} was busy — using ${port} instead.`);
-    }
-  });
 
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE' && maxRetries > 0) {
-      console.log(`⚠️  Port ${port} in use, trying ${port + 1}...`);
-      startServer(port + 1, maxRetries - 1);
-    } else {
-      console.error(`❌ Failed to start server:`, err.message);
-      process.exit(1);
-    }
+app.get('/', (req, res) => {
+  res.json({
+    message: 'MindSync AI Backend is running 🚀',
+    provider: 'Groq',
+    model: GROQ_MODEL
+  });
+});
+
+// ──────────────────────────────────────────────
+// SERVER STARTUP
+// ──────────────────────────────────────────────
+
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(
+      `🚀 Server running on http://localhost:${PORT}`
+    );
+
+    console.log(
+      `❤️ Health check: http://localhost:${PORT}/health`
+    );
   });
 }
 
-startServer(Number(PORT));
+// Export for Vercel
+export default app;
