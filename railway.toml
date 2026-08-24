@@ -1,0 +1,8 @@
+[build]
+builder = "nixpacks"
+buildCommand = "cd server && npm install --legacy-peer-deps"
+
+[deploy]
+startCommand = "cd server && node server.js"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
