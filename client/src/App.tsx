@@ -85,7 +85,11 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [material, setMaterial] = useState<StudyMaterial | null>(null);
-  const [activeTab, setActiveTab] = useState<'input' | 'flashcards' | 'quiz' | 'stats'>('input');
+  const [activeTab, setActiveTab] = useState<'input' | 'flashcards' | 'quiz' | 'stats'>(() => {
+    const state = window.history.state;
+    if (state?.tab) return state.tab;
+    return 'input';
+  });
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loadingMessage, setLoadingMessage] = useState('Parsing notes...');
   const [isDragOver, setIsDragOver] = useState(false);
@@ -102,6 +106,28 @@ export default function App() {
     }
     localStorage.setItem('theme', theme);
   }, [theme]);
+
+  // Browser history: push a state entry whenever tab changes
+  useEffect(() => {
+    const currentState = window.history.state;
+    if (currentState?.tab !== activeTab) {
+      window.history.pushState({ tab: activeTab }, '', window.location.pathname);
+    }
+  }, [activeTab]);
+
+  // Browser back/forward button: restore the tab from history state
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      const tab = e.state?.tab;
+      if (tab === 'input' || tab === 'flashcards' || tab === 'quiz' || tab === 'stats') {
+        setActiveTab(tab);
+      } else {
+        setActiveTab('input');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Load history from local storage on mount
   useEffect(() => {

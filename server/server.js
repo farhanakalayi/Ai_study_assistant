@@ -5,36 +5,11 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import Groq from 'groq-sdk';
 import { z } from 'zod';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
 
-// ──────────────────────────────────────────────
-// SETUP DIRECTORIES
-// ──────────────────────────────────────────────
+// Load environment variables
+dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// ──────────────────────────────────────────────
-// ENV LOADING
-// ──────────────────────────────────────────────
-
-console.log('=== MindSync AI Startup ===');
-
-let envPath = path.join(__dirname, '.env');
-let envFound = false;
-
-if (fs.existsSync(envPath)) {
-  envFound = true;
-  console.log(`Found .env file: ${envPath}`);
-} else {
-  dotenv.config();
-}
-
-if (envFound) {
-  dotenv.config({ path: envPath });
-}
+console.log('=== MindSync AI Backend Startup ===');
 
 // ──────────────────────────────────────────────
 // API KEY
@@ -56,22 +31,30 @@ const groq = new Groq({
   apiKey
 });
 
-// Use ONE model only.
-// Do not add llama-3.1-8b-instant as fallback.
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = 'openai/gpt-oss-120b';
 
 // ──────────────────────────────────────────────
 // EXPRESS APP
 // ──────────────────────────────────────────────
 
 const app = express();
+
+// IMPORTANT FOR RENDER
 const PORT = process.env.PORT || 5000;
+
+// ──────────────────────────────────────────────
+// SECURITY
+// ──────────────────────────────────────────────
 
 app.use(
   helmet({
     contentSecurityPolicy: false
   })
 );
+
+// ──────────────────────────────────────────────
+// CORS
+// ──────────────────────────────────────────────
 
 app.use(
   cors({
@@ -81,7 +64,15 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: '2mb' }));
+// ──────────────────────────────────────────────
+// BODY PARSER
+// ──────────────────────────────────────────────
+
+app.use(
+  express.json({
+    limit: '2mb'
+  })
+);
 
 // ──────────────────────────────────────────────
 // RATE LIMITING
@@ -207,7 +198,7 @@ function cleanJsonResponse(rawText) {
 }
 
 // ──────────────────────────────────────────────
-// GENERATE STUDY MATERIAL USING GROQ
+// GENERATE STUDY MATERIAL
 // ──────────────────────────────────────────────
 
 async function generateStudyMaterial(notes) {
@@ -215,7 +206,9 @@ async function generateStudyMaterial(notes) {
     throw new Error('API_KEY_MISSING');
   }
 
-  console.log(`🤖 Generating study material using: ${GROQ_MODEL}`);
+  console.log(
+    `🤖 Generating study material using: ${GROQ_MODEL}`
+  );
 
   const response = await Promise.race([
     groq.chat.completions.create({
@@ -248,7 +241,8 @@ async function generateStudyMaterial(notes) {
     )
   ]);
 
-  const text = response.choices?.[0]?.message?.content;
+  const text =
+    response.choices?.[0]?.message?.content;
 
   if (!text) {
     throw new Error('EMPTY_RESPONSE');
@@ -260,7 +254,7 @@ async function generateStudyMaterial(notes) {
 }
 
 // ──────────────────────────────────────────────
-// API ROUTE
+// GENERATE API
 // ──────────────────────────────────────────────
 
 app.post('/api/generate', async (req, res) => {
@@ -282,14 +276,14 @@ app.post('/api/generate', async (req, res) => {
     // Generate AI response
     const rawJson = await generateStudyMaterial(notes);
 
-    // Convert string to JavaScript object
+    // Parse JSON
     const parsedData = JSON.parse(rawJson);
 
-    // Validate structure
+    // Validate response
     const validatedData =
       StudyMaterialSchema.parse(parsedData);
 
-    // Send response to frontend
+    // Send response
     return res.status(200).json(validatedData);
 
   } catch (error) {
@@ -302,7 +296,7 @@ app.post('/api/generate', async (req, res) => {
     if (error.message === 'API_KEY_MISSING') {
       return res.status(500).json({
         error:
-          'Groq API key is missing. Add GROQ_API_KEY in Vercel Environment Variables.'
+          'Groq API key is missing. Add GROQ_API_KEY in Render Environment Variables.'
       });
     }
 
@@ -352,7 +346,7 @@ app.post('/api/generate', async (req, res) => {
 // ──────────────────────────────────────────────
 
 app.get('/health', (req, res) => {
-  res.json({
+  res.status(200).json({
     status: 'healthy',
     provider: 'groq',
     model: GROQ_MODEL,
@@ -365,7 +359,7 @@ app.get('/health', (req, res) => {
 // ──────────────────────────────────────────────
 
 app.get('/', (req, res) => {
-  res.json({
+  res.status(200).json({
     message: 'MindSync AI Backend is running 🚀',
     provider: 'Groq',
     model: GROQ_MODEL
@@ -373,20 +367,39 @@ app.get('/', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// SERVER STARTUP
+// ERROR HANDLER
 // ──────────────────────────────────────────────
 
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(
-      `🚀 Server running on http://localhost:${PORT}`
-    );
+app.use((err, req, res, next) => {
+  console.error('❌ Server Error:', err);
 
-    console.log(
-      `❤️ Health check: http://localhost:${PORT}/health`
-    );
+  res.status(500).json({
+    error: 'Internal server error'
   });
-}
+});
 
-// Export for Vercel
-export default app;
+// ──────────────────────────────────────────────
+// START SERVER
+// ──────────────────────────────────────────────
+
+// IMPORTANT:
+// Render requires the Express server to listen on
+// process.env.PORT.
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(
+    `🚀 MindSync AI Backend running on port ${PORT}`
+  );
+
+  console.log(
+    `❤️ Health check available at /health`
+  );
+
+  console.log(
+    `🤖 AI Provider: Groq`
+  );
+
+  console.log(
+    `🧠 Model: ${GROQ_MODEL}`
+  );
+});
